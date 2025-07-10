@@ -1,9 +1,8 @@
 ﻿#******************
 # NMEA Logger
-# file name: nmea_logger.py
 # Main component of the NMEA Logger application
-# Developed under Python 3.7.3
-# Requires v.3 of nmea_logging.config
+# Developed with Python 3.7.3
+# Requires nmea_logging.config
 #******************
 # Command line parameters:
 # None:                       nmea_logger.py
@@ -44,11 +43,9 @@ transfer_on = False
 #the script is not terminated during an FTP file transfer.
 threads_to_close = 0
 
-
 logging.basicConfig(filename="/home/pi/nmea_logger/nmea_logging.log", level=logging.INFO, format='%(asctime)s %(message)s' )
 logging.info("\n")
 logging.info("*** Program start")
-
 
 def main():
    global threads_to_close
@@ -58,12 +55,10 @@ def main():
    sl = StreamToLogger(stdout_logger, logging.INFO)
    sys.stdout = sl
 
-
    #Redirect STDERR to logging
    stderr_logger = logging.getLogger('STDERR')
    sl = StreamToLogger(stderr_logger, logging.ERROR)
    sys.stderr = sl
-
 
    GPIO.setmode(GPIO.BCM)
    GPIO.setwarnings(False)
@@ -76,9 +71,7 @@ def main():
    #OFF BUTTON
    GPIO.setup(13,GPIO.IN,pull_up_down=GPIO.PUD_UP)
 
-
    time.sleep(10)
-
 
    #Check valid time available
    rvc = check_clock() 
@@ -95,7 +88,6 @@ def main():
             time.sleep(0.2)
          time.sleep(2)
       sys.exit() 
-
 
    res_chk = media_path()
    if res_chk == "no_writable_media" or res_chk == "":
@@ -134,9 +126,7 @@ def main():
    tcp_sourceip = parser.get('tcp', 'tcp_sourceip')
    tcp_port = int(parser.get('tcp', 'tcp_port'))
    
-
-
-   #The first task, before starting processing is to move any stray data
+   #Before starting processing move any stray data
    #files that may be left in the media dir to the media/complete dir and zip
    #them there. Stray files may be produced when the program crashes or shutdown
    #did not complete orderly. Cannot cleanup these files when the logging is running
@@ -163,9 +153,6 @@ def main():
    except:
        pass
 
-
-
-
    if data_source == "com":
       ports = ['ttyUSB0','ttyUSB1','ttyUSB2']
       for po in ports:
@@ -183,7 +170,6 @@ def main():
          if po == 'ttyUSB2':
             led = 20
 
-
          #check that USB port exists
          pd = [] 
          pd = os.listdir("/dev")
@@ -192,16 +178,12 @@ def main():
             thc.start()
             threads_to_close = threads_to_close + 1
 
-
    if data_source == "tcp":
       name = "tcp"
       led = 20
       tht = threading.Thread(target=th_log_tcp2,args=(name,tcp_sourceip,tcp_port,led,outfilesiz,outfileext,cmedia,save_all_nmea,nmea_sentence_types))
       tht.start()
       threads_to_close = threads_to_close + 1
-
-
-
 
    #Monitoring thread
    the = threading.Thread(target=th_mon,args=(cmedia,))
@@ -213,207 +195,45 @@ def main():
    ths.start()
    threads_to_close = threads_to_close + 1
 
-
    #Thread for transferring data
    if transfer_enabled == 1:
       tht = threading.Thread(target=th_transfer,args=(cmedia,vessel_name,delete_after_transfer,ftp_server,ftp_user,ftp_password,ftp_wait_sec,ftp_use_ports_file))
       tht.start()
       threads_to_close = threads_to_close + 1
 
-
    logging.info("End")
 
-
-#TCP data source code which runs well for some time but fails after a day or two. The connects in the excepts do not work
-def th_log_tcp(name,tcp_sourceip,tcp_port,led,outfilesize,outfileext,media,save_all_nmea,nmea_sentence_types):
-   global current_location
-   global threads_to_close
-
-
-   time.sleep(3)
-   TEN_MINUTES = 10 * 60 * 1000
-
-
-   logging.info("Thread runing to log from TCP")
-   logging.info("Using media " + media)
-
-
-   while media == "":
-      time.sleep(2)
-   #Use first listed entry
-   flashdrive = "/media/pi/" + media + "/"
-
-
-   timestr = time.strftime("%Y%m%d-%H%M%S")
-   outfile = open(flashdrive + timestr + "-" + name + "." + outfileext, "a+", 1)
-
-
-   with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-      s.settimeout(1)
-
-
-      try:
-         s.connect((tcp_sourceip, tcp_port))
-         logging.info("TCP: connected with " + tcp_sourceip + " " + str(tcp_port))
-
-
-         bytectr = 0
-         last_pos_time = 0
-         last_radar_time = 0
-         ser_err_amt = 0
-         capt_pos = 0 
-
-
-         tr = b""
-         while True:
-            rec = s.recv(2048)
-            #This send is crucial. Without it some NMEA TCP sockets will fail, eventually
-            s.send( bytes("csiro_nmea_logger", "UTF-8"))  
-            tr = tr + rec
-            if len(rec) < 2048:
-               cf = tr.decode('utf8', 'ignore')
-               re = cf.split("\r\n")
-               for outdec in re:
-                  if len(outdec) > 0:
-                     dtstmp = datetime.utcnow().strftime("%Y%m%d-%H%M%S.%f")[:-3] + " UTC,"
-                     if save_all_nmea == 1:
-                        bytectr = bytectr + len(dtstmp) + len(outdec)
-                        outfile.write(dtstmp + outdec + "\n")
-                     else:
-                        sen_in = any(nst in outdec for nst in nmea_sentence_types)
-                        if sen_in:
-                           bytectr = bytectr + len(dtstmp) + len(outdec)
-                           outfile.write(dtstmp + outdec + "\n")
-               tr = b""
-               time.sleep(5)
-
-
-            #Blink green if pos and radar sentences have been received in the last 10 minutes, blink blue if not
-            if "GGA" in outdec:
-               #Capture position for determing if ftp file transfer can take place. Only every 100ths record.
-               if capt_pos == 100:
-                  last_pos_time = int(round(time.time() * 1000))
-                  capt_pos = 0
-               try:
-                  lpt = outdec.split("GGA,")[1]
-                  lpt_lat = float(lpt.split(",")[1])/100
-                  if lpt.split(",")[2] == 'S':
-                     lpt_lat = lpt_lat * -1
-                  tup1 = (math.modf(lpt_lat)[1], math.modf(lpt_lat)[0] * 100, 0)
-                  lpt_lat = dms2dd(tup1)
-                  lpt_lon = float(lpt.split(",")[3])/100
-                  if lpt.split(",")[4] == 'W':
-                     lpt_lon = lpt_lon * -1
-                  tup1 = (math.modf(lpt_lon)[1], math.modf(lpt_lon)[0] * 100, 0)
-                  lpt_lon = dms2dd(tup1)
-                  current_location = (lpt_lat, lpt_lon)
-               except:
-                  current_location = (0,0)
-                  capt_pos = 0
-               capt_pos = capt_pos + 1
-            
-            if "TTM" in outdec:
-               last_radar_time = int(round(time.time() * 1000))
-
-
-            tenMinAgo = int(round(time.time() * 1000)) - TEN_MINUTES
-
-
-            if last_pos_time > tenMinAgo and last_radar_time > tenMinAgo:
-               GPIO.output(26,GPIO.HIGH)
-               time.sleep(0.001)
-               GPIO.output(26,GPIO.LOW)
-            else:
-               GPIO.output(20,GPIO.HIGH)
-               time.sleep(0.001)
-               GPIO.output(20,GPIO.LOW)
-
-
-
-
-            if bytectr > outfilesize:
-               if not os.path.exists(flashdrive + "complete"):
-                  os.mkdir(flashdrive + "complete")
-               outfile.close()
-               logging.info("Done writing to file " + flashdrive + timestr + "-" + name + "." + outfileext)
-               #copy file to complete dir
-               shutil.copyfile(flashdrive + timestr + "-" + name + "." + outfileext, flashdrive + "complete/" + timestr + "-" + name + "." + outfileext)
-               #if copy was successful and copied file exists, delete it
-               if os.path.isfile(flashdrive + "complete/" + timestr + "-" + name + "." + outfileext):
-                  if os.path.isfile(flashdrive + timestr + "-" + name + "." + outfileext):
-                     os.remove(flashdrive + timestr + "-" + name + "." + outfileext)
-                  #zip copied file
-                  zipObj = zipfile.ZipFile(flashdrive + "complete/" + timestr + "-" + name + "." + "zip", 'w')
-                  an = timestr + "-" + name + "." + outfileext
-                  zipObj.write(flashdrive + "complete/" + timestr + "-" + name + "." + outfileext, compress_type=zipfile.ZIP_DEFLATED, arcname=an)
-                  zipObj.close()
-                  logging.info("File zipped")
-                  #delete file if zip was succcessful
-               if os.path.isfile(flashdrive + "complete/" + timestr + "-" + name + "." + "zip"):
-                  os.remove(flashdrive + "complete/" + timestr + "-" + name + "." + outfileext)
-               timestr = time.strftime("%Y%m%d-%H%M%S")
-               outfile = open(flashdrive + timestr + "-" + name + "." + outfileext, "a+", 1)
-               bytectr = 0
-
-
-            if time_to_exit:
-               logging.info(str(ser_err_amt) + " serial errors from port " + port)
-               logging.info("Exit from " + port)
-               threads_to_close = threads_to_close - 1
-               return
-
-
-      except socket.error:
-         #logging.info("TCP error: Socket error. Restarted socket")
-         s.connect((tcp_sourceip, tcp_port))
-
-
-      except socket.timeout:
-         #logging.info("TCP error: Socket timeout error. Restarted socket")
-         s.connect((tcp_sourceip, tcp_port))
-
-
-
-
-#Rewritten TCP data source code but with reconnect after fail from an internet example (see test_tcp9works.py)
+#Includes reconnect after fail  
 def th_log_tcp2(name,tcp_sourceip,tcp_port,led,outfilesize,outfileext,media,save_all_nmea,nmea_sentence_types):
    global current_location
    global threads_to_close
 
-
    time.sleep(3)
    TEN_MINUTES = 10 * 60 * 1000
 
-
    logging.info("Thread runing to log from TCP")
    logging.info("Using media " + media)
-
 
    while media == "":
       time.sleep(2)
    #Use first listed entry
    flashdrive = "/media/pi/" + media + "/"
 
-
    timestr = time.strftime("%Y%m%d-%H%M%S")
    outfile = open(flashdrive + timestr + "-" + name + "." + outfileext, "a+", 1)
 
-
    clientSocket = socket.socket()
-
 
    clientSocket.connect((tcp_sourceip, tcp_port))
     # keep track of connection status  
    connected = True  
    logging.info("TCP: connected with " + tcp_sourceip + " " + str(tcp_port))
 
-
    bytectr = 0
    last_pos_time = 0
    last_radar_time = 0
    ser_err_amt = 0
    capt_pos = 0 
-
 
    tr = b""
    while True:
@@ -438,7 +258,6 @@ def th_log_tcp2(name,tcp_sourceip,tcp_port,led,outfilesize,outfileext,media,save
                         outfile.write(dtstmp + outdec + "\n")
             tr = b""
             time.sleep(5)
-
 
          #Blink green if pos and radar sentences have been received in the last 10 minutes, blink blue if not
          if "GGA" in outdec:
@@ -467,9 +286,7 @@ def th_log_tcp2(name,tcp_sourceip,tcp_port,led,outfilesize,outfileext,media,save
          if "TTM" in outdec:
             last_radar_time = int(round(time.time() * 1000))
 
-
          tenMinAgo = int(round(time.time() * 1000)) - TEN_MINUTES
-
 
          if last_pos_time > tenMinAgo and last_radar_time > tenMinAgo:
             GPIO.output(26,GPIO.HIGH)
@@ -479,9 +296,6 @@ def th_log_tcp2(name,tcp_sourceip,tcp_port,led,outfilesize,outfileext,media,save
             GPIO.output(20,GPIO.HIGH)
             time.sleep(0.001)
             GPIO.output(20,GPIO.LOW)
-
-
-
 
          if bytectr > outfilesize:
             if not os.path.exists(flashdrive + "complete"):
@@ -507,13 +321,11 @@ def th_log_tcp2(name,tcp_sourceip,tcp_port,led,outfilesize,outfileext,media,save
             outfile = open(flashdrive + timestr + "-" + name + "." + outfileext, "a+", 1)
             bytectr = 0
 
-
          if time_to_exit:
             logging.info(str(ser_err_amt) + " serial errors from port " + port)
             logging.info("Exit from " + port)
             threads_to_close = threads_to_close - 1
             return
-
 
       except (socket.error, socket.timeout):
          connected = False  
@@ -528,15 +340,9 @@ def th_log_tcp2(name,tcp_sourceip,tcp_port,led,outfilesize,outfileext,media,save
                time.sleep( 2 )  
    clientSocket.close();
 
-
-
-
-
-
 def th_log_serial(name,port,baud_rate,data_bits,parity,stop_bits,timeout,led,outfilesize,outfileext,media,save_all_nmea,nmea_sentence_types):
    global current_location
    global threads_to_close
-
 
    time.sleep(3)
    TEN_MINUTES = 10 * 60 * 1000
@@ -545,12 +351,10 @@ def th_log_serial(name,port,baud_rate,data_bits,parity,stop_bits,timeout,led,out
       logging.info("Thread runing to log from " + port)
       logging.info("Using media " + media)
 
-
       while media == "":
          time.sleep(2)
       #Use first listed entry
       flashdrive = "/media/pi/" + media + "/"
-
 
       timestr = time.strftime("%Y%m%d-%H%M%S")
       outfile = open(flashdrive + timestr + "-" + name + "." + outfileext, "a+", 1)
@@ -580,8 +384,6 @@ def th_log_serial(name,port,baud_rate,data_bits,parity,stop_bits,timeout,led,out
             ser_err_amt = ser_err_amt + 1
             if ser_err_amt % 100 == 0:
                logging.info("100 serial errors from port " + port)
-
-
          
          #Blink green if pos and radar sentences have been received in the last 10 minutes,
          #blink blue if not
@@ -612,9 +414,7 @@ def th_log_serial(name,port,baud_rate,data_bits,parity,stop_bits,timeout,led,out
          if "TTM" in outdec:
             last_radar_time = int(round(time.time() * 1000))
 
-
          tenMinAgo = int(round(time.time() * 1000)) - TEN_MINUTES
-
 
          if last_pos_time > tenMinAgo and last_radar_time > tenMinAgo:
             GPIO.output(26,GPIO.HIGH)
@@ -624,9 +424,6 @@ def th_log_serial(name,port,baud_rate,data_bits,parity,stop_bits,timeout,led,out
             GPIO.output(20,GPIO.HIGH)
             time.sleep(0.001)
             GPIO.output(20,GPIO.LOW)
-
-
-
 
          if bytectr > outfilesize:
             if not os.path.exists(flashdrive + "complete"):
@@ -652,15 +449,11 @@ def th_log_serial(name,port,baud_rate,data_bits,parity,stop_bits,timeout,led,out
             outfile = open(flashdrive + timestr + "-" + name + "." + outfileext, "a+", 1)
             bytectr = 0
 
-
          if time_to_exit:
             logging.info(str(ser_err_amt) + " serial errors from port " + port)
             logging.info("Exit from " + port)
             threads_to_close = threads_to_close - 1
             return
-
-
-
 
 def th_mon(media):
    global threads_to_close
@@ -681,9 +474,7 @@ def th_mon(media):
       GPIO.output(l,GPIO.LOW)
       time.sleep(0.2)
 
-
    time.sleep(1)
-
 
    while not time_to_exit:
       flashdrive = "/media/pi/" + media + "/"
@@ -701,7 +492,6 @@ def th_mon(media):
       time.sleep(2)
    threads_to_close = threads_to_close - 1
 
-
 def th_stop():
    global threads_to_close
    logging.info("Stop thread started")
@@ -716,7 +506,6 @@ def th_stop():
             threads_to_close = threads_to_close - 1
             while threads_to_close > 0:
                pass
-
 
             #Blink green, blue red when ending program 
             GPIO.output(26,GPIO.HIGH)
@@ -735,22 +524,17 @@ def th_stop():
       if GPIO.input(13) == GPIO.HIGH:
          off_pressed = 0
 
-
       time.sleep(1)
    
-
-
 def th_transfer(media,vessel_name,delete_after_transfer,ftp_server,ftp_user,ftp_password,ftp_wait_sec,ftp_use_ports_file):
    global threads_to_close
    global current_location
-
 
    logging.info("Transfer thread started")
    cl = current_location
    portlist = []
    can_transmit = False
    flashdrive = "/media/pi/" + media + "/"
-
 
    if ftp_use_ports_file == 1:
       #Read ports (where data transfer can take place) into list for later use
@@ -761,13 +545,11 @@ def th_transfer(media,vessel_name,delete_after_transfer,ftp_server,ftp_user,ftp_
             elem = line.split(" ")
             location = elem[0].strip()
 
-
             top_left = elem[1].strip().replace("(","")
             top_left = top_left.replace(")","")
             tl = top_left.split(",")
             tla = float(tl[0])
             tlo = float(tl[1])
-
 
             bottom_right = elem[2].strip().replace(")","")
             bottom_right = bottom_right.replace("(","")
@@ -789,7 +571,6 @@ def th_transfer(media,vessel_name,delete_after_transfer,ftp_server,ftp_user,ftp_
                break
             else:
                can_transmit = False
-
 
       if can_transmit:
          files_to_transfer = []
@@ -834,10 +615,8 @@ def th_transfer(media,vessel_name,delete_after_transfer,ftp_server,ftp_user,ftp_
                except:
                   pass
 
-
       time.sleep(ftp_wait_sec)
    threads_to_close = threads_to_close - 1
-
 
 def media_path():
    ld = []
@@ -865,15 +644,9 @@ def media_path():
    logging.info("No_writeable_media")
    return "no_writeable_media"
 
-
-
-
 def dms2dd(tup1):
    dd = float(tup1[0]) + float(tup1[1])/60 + float(tup1[2])/(60*60)
    return dd
-
-
-
 
 class StreamToLogger(object):
       #Fake file-like stream object that redirects writes to a logger instance.
@@ -882,11 +655,9 @@ class StreamToLogger(object):
             self.log_level = log_level
             self.linebuf = ''
 
-
       def write(self, buf):
             for line in buf.rstrip().splitlines():
                   self.logger.log(self.log_level, line.rstrip())
-
 
 logging.basicConfig(
 level=logging.DEBUG,
@@ -894,9 +665,6 @@ format='%(asctime)s:%(levelname)s:%(name)s:%(message)s',
 filename="out.log",
 filemode='a'
 )
-
-
-
 
 if __name__ == "__main__":
    main()
